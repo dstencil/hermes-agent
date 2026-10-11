@@ -789,6 +789,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     term.loadAddon(new WebLinksAddon());
 
     let mobileInputCleanup: (() => void) | null = null;
+    let terminalDataRevision = 0;
     // xterm occasionally drops committed dead-key/IME text instead of emitting
     // onData. The compositionend event supplies the authoritative text.
     let sendComposedText: (data: string) => void = () => undefined;
@@ -846,7 +847,6 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       // Android Gboard sometimes commits text to xterm's hidden textarea
       // without xterm emitting onData. Defer a fallback until xterm has had
       // a chance to handle the native input event, avoiding double sends.
-      let terminalDataRevision = 0;
       const pendingMobileInputTimers = new Set<ReturnType<typeof setTimeout>>();
       const forwardMobileInputFallback = (ev: Event) => {
         if (!/Android/i.test(navigator.userAgent)) return;
