@@ -790,6 +790,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
 
     let mobileInputCleanup: (() => void) | null = null;
     let terminalDataRevision = 0;
+    let forwardMobilePtyFallback: ((data: string) => void) | null = null;
     // xterm occasionally drops committed dead-key/IME text instead of emitting
     // onData. The compositionend event supplies the authoritative text.
     let sendComposedText: (data: string) => void = () => undefined;
@@ -864,7 +865,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         const timer = setTimeout(() => {
           pendingMobileInputTimers.delete(timer);
           if (terminalDataRevision === revision) {
-            forwardPtyData(data, false);
+            forwardMobilePtyFallback?.(data);
           }
         }, 0);
         pendingMobileInputTimers.add(timer);
@@ -1545,6 +1546,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       // must not consume the mobile replacement window intended for xterm's
       // normal onData path.
       sendComposedText = (data) => forwardPtyData(data, false);
+      forwardMobilePtyFallback = (data) => forwardPtyData(data, false);
       onDataDisposable = term.onData((data) => {
         // Counts native xterm emissions for Android input fallback deduplication.
         terminalDataRevision++;
