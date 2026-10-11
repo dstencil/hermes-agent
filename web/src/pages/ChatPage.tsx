@@ -789,6 +789,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     term.loadAddon(new WebLinksAddon());
 
     let mobileInputCleanup: (() => void) | null = null;
+    let terminalDataRevision = 0;
+    let forwardMobilePtyFallback: ((data: string) => void) | null = null;
     // xterm occasionally drops committed dead-key/IME text instead of emitting
     // onData. The compositionend event supplies the authoritative text.
     let sendComposedText: (data: string) => void = () => undefined;
@@ -843,6 +845,31 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           mobileReplacementInputUntilRef.current = Date.now() + MOBILE_REPLACEMENT_WINDOW_MS;
         }
       };
+      // Android Gboard sometimes commits text to xterm's hidden textarea
+      // without xterm emitting onData. Defer a fallback until xterm has had
+      // a chance to handle the native input event, avoiding double sends.
+      const pendingMobileInputTimers = new Set<ReturnType<typeof setTimeout>>();
+      const forwardMobileInputFallback = (ev: Event) => {
+        if (!/Android/i.test(navigator.userAgent)) return;
+        const input = ev as InputEvent;
+        if (input.isComposing || input.inputType === "insertCompositionText") return;
+        const data = input.inputType === "deleteContentBackward"
+          ? "\\x7f"
+          : input.inputType === "insertLineBreak"
+            ? "\\r"
+            : input.inputType === "insertText"
+              ? input.data
+              : null;
+        if (!data) return;
+        const revision = terminalDataRevision;
+        const timer = setTimeout(() => {
+          pendingMobileInputTimers.delete(timer);
+          if (terminalDataRevision === revision) {
+            forwardMobilePtyFallback?.(data);
+          }
+        }, 0);
+        pendingMobileInputTimers.add(timer);
+      };
       const markCompositionEnd = (ev: CompositionEvent) => {
         mobileReplacementInputUntilRef.current = Date.now() + MOBILE_REPLACEMENT_WINDOW_MS;
         compositionForwarder.onCompositionEnd(ev.data);
@@ -850,9 +877,13 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
 
       textarea.addEventListener("beforeinput", markReplacementInput, true);
       textarea.addEventListener("compositionend", markCompositionEnd, true);
+      textarea.addEventListener("input", forwardMobileInputFallback, true);
       mobileInputCleanup = () => {
         textarea.removeEventListener("beforeinput", markReplacementInput, true);
         textarea.removeEventListener("compositionend", markCompositionEnd, true);
+        textarea.removeEventListener("input", forwardMobileInputFallback, true);
+        for (const timer of pendingMobileInputTimers) clearTimeout(timer);
+        pendingMobileInputTimers.clear();
       };
     }
 
@@ -1515,7 +1546,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       // must not consume the mobile replacement window intended for xterm's
       // normal onData path.
       sendComposedText = (data) => forwardPtyData(data, false);
+      forwardMobilePtyFallback = (data) => forwardPtyData(data, false);
       onDataDisposable = term.onData((data) => {
+        // Counts native xterm emissions for Android input fallback deduplication.
+        terminalDataRevision++;
         if (!SGR_MOUSE_RE.test(data)) {
           compositionForwarder.noteTerminalData(data);
         }
